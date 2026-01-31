@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Save LINE User ID</title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; }
+        #status { margin-top: 20px; color: gray; }
+        button { padding: 10px 20px; background-color: #06C755; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer;}
+    </style>
+</head>
+<body>
+
+    <h2>Register System</h2>
+    <div id="profile">
+        <p>กำลังโหลดข้อมูล...</p>
+    </div>
+    <button id="btnSave" style="display:none;" onclick="saveToSheet()">บันทึกข้อมูล</button>
+    <p id="status"></p>
+
+    <script>
+        // --- ส่วนตั้งค่า ---
+        const LIFF_ID = "2008958042-EpsJxKgH"; // ใส่ LIFF ID ของคุณ
+        const SCRIPT_URL = "AKfycbyJ26aWz7KWGICx2JqSg8LgYyXzkWx_yzLoykIT8bIL3ecvtBrUObYahklgiOgrQwe3Jw"; // ใส่ URL ของ Apps Script
+
+        let userProfile = {};
+
+        async function main() {
+            try {
+                await liff.init({ liffId: LIFF_ID });
+                
+                if (!liff.isLoggedIn()) {
+                    liff.login();
+                } else {
+                    // ดึงข้อมูล User
+                    const profile = await liff.getProfile();
+                    userProfile = profile;
+                    
+                    // แสดงผลหน้าจอ
+                    document.getElementById("profile").innerHTML = `
+                        <img src="${profile.pictureUrl}" width="100" style="border-radius:50%"><br>
+                        <b>สวัสดี, ${profile.displayName}</b>
+                    `;
+                    document.getElementById("btnSave").style.display = "inline-block";
+                    
+                    // (Optional) ถ้าอยากให้บันทึกอัตโนมัติทันทีที่เปิด ให้เรียก saveToSheet() ตรงนี้เลย
+                    // saveToSheet(); 
+                }
+            } catch (err) {
+                document.getElementById("status").innerText = "Error: " + err;
+            }
+        }
+
+        function saveToSheet() {
+            document.getElementById("status").innerText = "กำลังบันทึก...";
+            
+            // ส่งค่าไป Google Apps Script
+            // ใช้ mode: 'no-cors' เพื่อแก้ปัญหา Browser บ่นเรื่อง CORS Policy
+            // ข้อเสียของ no-cors คือเราจะอ่าน response กลับมาไม่ได้ แต่ข้อมูลส่งไปถึงแน่นอน
+            fetch(SCRIPT_URL, {
+                method: 'POST',
+                mode: 'no-cors', 
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    userId: userProfile.userId,
+                    displayName: userProfile.displayName,
+                    pictureUrl: userProfile.pictureUrl
+                })
+            }).then(() => {
+                document.getElementById("status").innerText = "บันทึกสำเร็จเรียบร้อย!";
+                document.getElementById("btnSave").style.display = "none";
+                
+                // ปิดหน้าต่าง LIFF อัตโนมัติ (ถ้าต้องการ)
+                // setTimeout(() => liff.closeWindow(), 2000);
+            }).catch(err => {
+                document.getElementById("status").innerText = "ส่งข้อมูลไม่สำเร็จ: " + err;
+            });
+        }
+
+        main();
+    </script>
+</body>
+</html>

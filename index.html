@@ -1,21 +1,19 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <base target="_top">
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Check-In System</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style> 
     body { background-color: #f0f2f5; font-family: 'Sarabun', sans-serif; padding-top:20px; } 
     .card { max-width: 400px; margin: 0 auto; border-radius: 15px; } 
-    /* Style สำหรับกล่องสถานะ */
     .loc-box { margin-bottom: 15px; padding: 15px; border-radius: 8px; font-size: 1rem; display: none; text-align: center; border: 2px solid transparent;}
     .loc-ok { background-color: #d1e7dd; color: #0f5132; border-color: #badbcc; }
     .loc-err { background-color: #f8d7da; color: #842029; border-color: #f5c2c7; }
     .loc-loading { background-color: #cfe2ff; color: #084298; border-color: #b6d4fe; }
-    /* Style สำหรับ LIFF info */
-    .liff-badge { font-size: 0.9rem; margin-bottom: 10px; color: #00B900; font-weight: bold; }
+    .liff-badge { color: #00B900; font-weight: bold; margin-bottom: 10px; font-size: 0.9rem; }
   </style>
   <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap" rel="stylesheet">
 </head>
@@ -25,13 +23,10 @@
       <h2 class="mb-3 fw-bold">📍 ลงเวลาทำงาน</h2>
       
       <div id="liffStatus"></div>
-
       <div id="gpsAlert" class="alert alert-warning">🛰️ กำลังค้นหา GPS...</div>
-      
       <div id="locationStatus" class="loc-box"></div>
 
       <form id="loginForm" style="display:none;" onsubmit="handleLogin(event)">
-        
         <div class="mb-3 text-start">
           <label class="fw-bold">เลือกชื่อพนักงาน</label>
           <select id="username" class="form-select" required>
@@ -52,145 +47,172 @@
   </div>
 
   <script>
-    var lat, lng;
-    var isLiffAuthenticated = false; // ตัวแปรเช็คสถานะ LIFF
+    // 🔴 1. ใส่ URL ของ Web App ที่ Deploy แล้ว (ลงท้ายด้วย /exec)
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbz2HMxs_j29QkyuDH3V4bJVazndu1DE6tha8j6b0Qj29HXff3jCD0NT-7272WxwR-f8/exec"; 
     
-    window.onload = function() {
-      // 1. เริ่มทำงาน LIFF (เพิ่มใหม่)
-      initLiff();
+    // 🔴 2. ใส่ LIFF ID ของคุณ
+    const MY_LIFF_ID = "2008958042-EpsJxKgH";
 
-      // 2. เริ่มหา GPS (ของเดิม)
+    var lat = 0, lng = 0;
+    var isLiffAuthenticated = false;
+
+    window.onload = function() {
+      // เริ่มต้นระบบ
+      initLiff();
+      
+      // ขอพิกัด GPS
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(function(p) {
-          lat = p.coords.latitude; lng = p.coords.longitude;
+          lat = p.coords.latitude; 
+          lng = p.coords.longitude;
           
-          // แจ้งเตือนว่าเจอ GPS แล้ว
           document.getElementById('gpsAlert').className = 'alert alert-success p-1';
-          document.getElementById('gpsAlert').style.fontSize = '0.8rem';
           document.getElementById('gpsAlert').innerHTML = '✅ GPS: ' + lat.toFixed(5) + ', ' + lng.toFixed(5);
-          
           document.getElementById('loginForm').style.display = 'block';
-
-          // สั่งเช็คสถานที่ทันที
-          autoDetectLocation(lat, lng);
+          
+          // เช็คระยะทาง (เรียก API)
+          checkLocation(lat, lng);
 
         }, function(e) {
           document.getElementById('gpsAlert').className = 'alert alert-danger';
-          document.getElementById('gpsAlert').innerHTML = '❌ ไม่พบ GPS (กรุณาเปิด GPS)';
+          document.getElementById('gpsAlert').innerHTML = '❌ กรุณาเปิด GPS และกดอนุญาต';
         }, {enableHighAccuracy: true});
-      } else { alert("อุปกรณ์ไม่รองรับ GPS"); }
+      } else {
+        alert("Browser ไม่รองรับ GPS");
+      }
 
-      loadEmployeeList();
+      // โหลดรายชื่อ (เรียก API)
+      loadEmployees();
     };
 
-    // ฟังก์ชันใหม่: จัดการ LIFF Login
+    // --- ฟังก์ชัน 1: เชื่อมต่อ LIFF ---
     async function initLiff() {
       try {
-        // ⚠️⚠️ เปลี่ยน ID ตรงนี้เป็นของคุณ ⚠️⚠️
-        //await liff.init({ liffId: "ใส่_LIFF_ID_ของคุณที่นี่" });
-        await liff.init({ liffId: "2008958042-EpsJxKgH" });
+        await liff.init({ liffId: MY_LIFF_ID });
         if (liff.isLoggedIn()) {
           const profile = await liff.getProfile();
-          // ส่ง UserId ไปเช็คกับ Google Sheet
-          google.script.run.withSuccessHandler(function(res) {
-            if (res.status == 'found') {
-              // ถ้าเจอชื่อในระบบ:
-              isLiffAuthenticated = true;
-              
-              // 1. เลือกชื่อให้อัตโนมัติ
-              var select = document.getElementById('username');
-              select.value = res.user;
-              
-              // 2. ซ่อนช่องรหัสผ่าน
-              document.getElementById('passwordArea').style.display = 'none';
-              
-              // 3. ยัดค่ารหัสผ่านพิเศษ (ต้องตรงกับใน code.gs)
-              document.getElementById('password').value = "LIFF_VERIFIED_BYPASS"; 
-              
-              // 4. แสดงข้อความทักทาย
-              document.getElementById('liffStatus').innerHTML = '<div class="liff-badge">👋 สวัสดีคุณ ' + res.name + ' (LINE Login)</div>';
-            }
-          }).checkLiffLogin(profile.userId);
+          
+          // เรียก API ไปเช็ค UserID
+          fetch(GAS_API_URL + "?action=checkLiff&uid=" + profile.userId)
+            .then(res => res.json())
+            .then(data => {
+              if (data.status == 'found') {
+                isLiffAuthenticated = true;
+                // Auto Select ชื่อ
+                var select = document.getElementById('username');
+                select.value = data.user;
+                // ซ่อนรหัสผ่าน
+                document.getElementById('passwordArea').style.display = 'none';
+                document.getElementById('password').value = "LIFF_VERIFIED_BYPASS";
+                // แสดงสถานะ
+                document.getElementById('liffStatus').innerHTML = '<div class="liff-badge">👋 สวัสดี ' + data.name + ' (LINE Login)</div>';
+              }
+            });
         } else {
-          // ถ้ายังไม่ Login ให้ Login อัตโนมัติ (หรือจะปล่อยว่างไว้ให้กรอกมือก็ได้)
+          // สั่ง Login
           liff.login();
         }
-      } catch (err) {
-        console.log("LIFF Error: ", err);
-      }
+      } catch (err) { console.error("LIFF Error:", err); }
     }
 
-    function loadEmployeeList() {
-      google.script.run.withSuccessHandler(function(users) {
-        var select = document.getElementById('username');
-        // เก็บค่าเดิมไว้ก่อนเผื่อ LIFF set ค่าไปแล้ว
-        var currentVal = select.value;
-        
-        select.innerHTML = '<option value="" disabled selected>-- กรุณาเลือกชื่อของคุณ --</option>';
-        users.forEach(function(u) {
-          var option = document.createElement("option");
-          option.value = u.user; 
-          option.text = u.name; 
-          select.appendChild(option);
+    // --- ฟังก์ชัน 2: โหลดรายชื่อพนักงาน ---
+    function loadEmployees() {
+      fetch(GAS_API_URL + "?action=getUsers")
+        .then(res => res.json())
+        .then(users => {
+          var select = document.getElementById('username');
+          var oldVal = select.value;
+          select.innerHTML = '<option value="" disabled selected>-- เลือกชื่อ --</option>';
+          users.forEach(u => {
+            var opt = document.createElement("option");
+            opt.value = u.user; 
+            opt.text = u.name;
+            select.appendChild(opt);
+          });
+          if(oldVal) select.value = oldVal;
+        })
+        .catch(e => console.error("Load Users Error:", e));
+    }
+
+    // --- ฟังก์ชัน 3: เช็คระยะทาง ---
+    function checkLocation(lat, lng) {
+      var box = document.getElementById('locationStatus');
+      box.style.display = 'block';
+      box.className = 'loc-box loc-loading';
+      box.innerHTML = '🔄 กำลังเช็คระยะทาง...';
+
+      fetch(GAS_API_URL + "?action=findLocation&lat=" + lat + "&lng=" + lng)
+        .then(res => res.json())
+        .then(data => {
+           if(data.status == 'ok') {
+             box.className = 'loc-box loc-ok';
+             box.innerHTML = data.message;
+           } else {
+             box.className = 'loc-box loc-err';
+             box.innerHTML = data.message;
+           }
+        })
+        .catch(e => {
+           box.className = 'loc-box loc-err';
+           box.innerHTML = '❌ เชื่อมต่อ Server ไม่ได้';
         });
-
-        // ถ้า LIFF เลือกชื่อให้แล้ว ให้ set กลับไปค่าเดิม
-        if (currentVal && currentVal !== "") {
-            select.value = currentVal;
-        }
-
-      }).getEmployeeList();
     }
 
-    function autoDetectLocation(lat, lng) {
-      var locBox = document.getElementById('locationStatus');
-      
-      locBox.style.display = 'block';
-      locBox.className = 'loc-box loc-loading';
-      locBox.innerHTML = '🔄 กำลังตรวจสอบพิกัดสถานที่...';
-
-      google.script.run.withSuccessHandler(function(res) {
-        if (res.status == 'ok') {
-          locBox.className = 'loc-box loc-ok'; 
-          locBox.innerHTML = res.message; 
-        } else {
-          locBox.className = 'loc-box loc-err'; 
-          locBox.innerHTML = res.message;
-        }
-      }).findNearestLocation(lat, lng);
-    }
-
+    // --- ฟังก์ชัน 4: กดปุ่มลงเวลา ---
     function handleLogin(e) {
       e.preventDefault();
       var u = document.getElementById('username').value;
       var p = document.getElementById('password').value;
       var btn = document.getElementById('submitBtn');
       var statusBox = document.getElementById('statusBox');
-      
-      var workType = ""; 
-      var today = new Date();
-      var dayOfWeek = today.getDay(); 
 
-      if (dayOfWeek === 0 || dayOfWeek === 6) {
-         var isOT = confirm("วันนี้เป็นวันหยุด\nเลือกประเภทการลงเวลา:\n\nOK = ลง OT\nCancel = ลงงานปกติ");
-         workType = isOT ? "OT" : "NORMAL";
+      var workType = "NORMAL";
+      var d = new Date().getDay();
+      if(d===0 || d===6) {
+        if(confirm("วันนี้วันหยุด เลือกประเภทงาน:\n\n[OK] = OT\n[Cancel] = งานปกติ")) {
+          workType = "OT";
+        }
       }
 
-      btn.disabled = true; btn.innerText = "กำลังบันทึก...";
-      
-      google.script.run.withSuccessHandler(function(res) {
-        btn.disabled = false; btn.innerText = "ยืนยันการลงเวลา";
-        statusBox.className = (res.status == 'success') ? 'alert alert-success' : 'alert alert-danger';
-        statusBox.innerHTML = res.message;
-        
-        if(res.status == 'success') {
-           // ถ้าไม่ได้ Login ผ่าน LIFF ให้เคลียร์รหัสผ่าน
-           if (!isLiffAuthenticated) {
-             document.getElementById('password').value = "";
-           }
-           autoDetectLocation(lat, lng); // เช็คระยะซ้ำเพื่อความชัวร์
-        }
-      }).processCheckIn(u, p, lat, lng, workType); 
+      btn.disabled = true; 
+      btn.innerText = "กำลังบันทึก...";
+
+      // ส่งข้อมูลแบบ POST (ใช้ text/plain เพื่อเลี่ยง CORS Preflight)
+      fetch(GAS_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: "checkIn",
+          u: u, 
+          p: p, 
+          lat: lat, 
+          lng: lng, 
+          type: workType
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+         btn.disabled = false; 
+         btn.innerText = "ยืนยันการลงเวลา";
+         
+         if(data.status == 'success') {
+           statusBox.className = 'alert alert-success';
+           statusBox.innerHTML = data.message;
+           // ถ้าไม่ได้ใช้ LIFF ให้เคลียร์รหัสผ่าน
+           if(!isLiffAuthenticated) document.getElementById('password').value = "";
+           checkLocation(lat, lng);
+         } else {
+           statusBox.className = 'alert alert-danger';
+           statusBox.innerHTML = data.message;
+         }
+      })
+      .catch(err => {
+         btn.disabled = false; 
+         btn.innerText = "ยืนยันการลงเวลา";
+         statusBox.className = 'alert alert-danger';
+         statusBox.innerHTML = '❌ เกิดข้อผิดพลาดในการเชื่อมต่อ';
+         console.error(err);
+      });
     }
   </script>
 </body>
